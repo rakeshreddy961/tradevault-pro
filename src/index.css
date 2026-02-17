@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- ─── PWA Core ─── -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#7c3aed" />
+
+    <!-- ─── iPhone / iPad PWA ─── -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TradeVault" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+    <!-- ─── Android / General ─── -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+
+    <!-- ─── SEO / Info ─── -->
+    <title>TradeVault Pro</title>
+    <meta name="description" content="AI-powered stock trading learning platform with screener, backtester, and knowledge vault." />
+
+    <!-- ─── Splash screen color on iPhone ─── -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { background: #08080f; }
+      /* Safe area padding for iPhone notch */
+      #root { padding-top: env(safe-area-inset-top); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+
+    <!-- ─── Register Service Worker ─── -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(() => console.log('TradeVault SW registered'))
+            .catch((e) => console.log('SW error:', e));
+        });
+      }
+    </script>
+  </body>
+</html>
