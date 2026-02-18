@@ -182,22 +182,27 @@ async function fetchRealStock(sym, exch, apiKey) {
 }
 
 // ─── CLAUDE AI ────────────────────────────────────────────────────────────────
-async function callClaude(messages, system = "", pdfB64 = null) {
+async function callClaude(messages, system = "", pdfB64 = null, apiKey = "") {
+  if (!apiKey) throw new Error("Claude API key not set. Click ⚙ Keys to add it.");
   const content = pdfB64
     ? [{ type:"document", source:{ type:"base64", media_type:"application/pdf", data:pdfB64 } }, { type:"text", text:messages[0].content }]
     : messages[0].content;
   const ms = [{ role:"user", content }, ...messages.slice(1)];
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
-    headers: {
-  "Content-Type": "application/json",
-  "x-api-key": import.meta.env.VITE_ANTHROPIC_KEY,
-  "anthropic-version": "2023-06-01",
-},
+    headers:{ 
+      "Content-Type":"application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
     body: JSON.stringify({ model:"claude-sonnet-4-5-20250929", max_tokens:1000, system, messages:ms }),
   });
+  if (!r.ok) {
+    const err = await r.text();
+    throw new Error(`Claude API error: ${err.slice(0,100)}`);
+  }
   const d = await r.json();
-  return d.content?.[0]?.text || "Error connecting to AI.";
+  return d.content?.[0]?.text || "Error: No response from AI.";
 }
 
 // ─── DEFAULTS ─────────────────────────────────────────────────────────────────
@@ -361,31 +366,47 @@ export default function TradeVaultPro() {
 
   // ── Load/save vault ──
   useEffect(() => {
-    (async()=>{ try{ const r=await window.storage.get("tvp3-vault"); if(r) setVault(JSON.parse(r.value)); }catch{} setStOk(true); })();
+    try { 
+      const saved = localStorage.getItem("tvp3-vault"); 
+      if (saved) setVault(JSON.parse(saved)); 
+    } catch(e) { 
+      console.error("Error loading vault:", e); 
+    }
+    setStOk(true);
   },[]);
- useEffect(() => {
-  if (!stOk) return;
-
-  try {
-    localStorage.setItem("tvp3-vault", JSON.stringify(vault));
-  } catch (err) {
-    console.error("Storage failed:", err);
-  }
-}, [vault, stOk]);
-
+  
+  useEffect(() => { 
+    if (!stOk) return; 
+    try {
+      localStorage.setItem("tvp3-vault", JSON.stringify(vault));
+    } catch(e) {
+      console.error("Error saving vault:", e);
+    }
+  },[vault,stOk]);
 
   useEffect(() => { msgEnd.current?.scrollIntoView({behavior:"smooth"}); },[msgs]);
 
   // ── Load API keys from storage ──
   useEffect(() => {
-    (async()=>{
-      try{ const r=await window.storage.get("tvp3-keys"); if(r){ const k=JSON.parse(r.value); setApiKeys(k); setKeysInput(k); } }catch{}
-    })();
+    try {
+      const saved = localStorage.getItem("tvp3-keys");
+      if (saved) {
+        const k = JSON.parse(saved);
+        setApiKeys(k);
+        setKeysInput(k);
+      }
+    } catch(e) {
+      console.error("Error loading keys:", e);
+    }
   },[]);
 
   const saveKeys = () => {
     setApiKeys(keysInput);
-    window.storage.set("tvp3-keys",JSON.stringify(keysInput)).catch(()=>{});
+    try {
+      localStorage.setItem("tvp3-keys", JSON.stringify(keysInput));
+    } catch(e) {
+      console.error("Error saving keys:", e);
+    }
     setShowSettings(false);
     setFetchedUs(false);
     setFetchedIn(false);
@@ -486,6 +507,7 @@ export default function TradeVaultPro() {
   // ── Tutor ──
   const sendTutor = async () => {
     if(!tin.trim()||tload) return;
+    if(!apiKeys.claude){ setMsgs(p=>[...p,{role:"assistant",content:"⚠️ Claude API key not set. Click ⚙ Keys at the top to add your Anthropic API key."}]); return; }
     const um={role:"user",content:tin};
     const history=[...msgs,um];
     setMsgs(history); setTin(""); setTload(true);
@@ -494,18 +516,27 @@ export default function TradeVaultPro() {
       const reply=await callClaude(history.map(m=>({role:m.role,content:m.content})),
         `You are an expert stock trading tutor covering both US markets (NYSE/NASDAQ) and Indian markets (NSE/BSE). The user is a beginner.
 User's saved strategies:\n${vCtx}
-Guidelines: explain simply with analogies, mention both markets where relevant, 3-4 paragraphs, suggest saving insights to vault, no specific buy/sell recommendations.`);
+Guidelines: explain simply with analogies, mention both markets where relevant, 3-4 paragraphs, suggest saving insights to vault, no specific buy/sell recommendations.`,
+        null, apiKeys.claude);
       setMsgs(p=>[...p,{role:"assistant",content:reply}]);
-    }catch{ setMsgs(p=>[...p,{role:"assistant",content:"Connection error."}]); }
+    }catch(e){ 
+      setMsgs(p=>[...p,{role:"assistant",content:`Error: ${e.message || "Connection failed. Check your API key."}`}]); 
+    }
     setTload(false);
   };
 
   // ── PDF ──
   const analyzePdf = async () => {
     if(!pdfB64||pdfLoad) return;
+    if(!apiKeys.claude){ setPdfRes("⚠️ Claude API key not set. Click ⚙ Keys to add your Anthropic API key."); return; }
     setPdfLoad(true); setPdfRes(null);
-    try{ const r=await callClaude([{role:"user",content:pdfPr}],"You are a trading strategy extraction expert. Extract actionable knowledge.",pdfB64); setPdfRes(r); }
-    catch{ setPdfRes("Error analyzing PDF."); }
+    try{ 
+      const r=await callClaude([{role:"user",content:pdfPr}],
+        "You are a trading strategy extraction expert. Extract actionable knowledge.",
+        pdfB64, apiKeys.claude); 
+      setPdfRes(r); 
+    }
+    catch(e){ setPdfRes(`Error: ${e.message || "Failed to analyze PDF."}`); }
     setPdfLoad(false);
   };
 
@@ -520,26 +551,30 @@ Guidelines: explain simply with analogies, mention both markets where relevant, 
   // ── Ideas ──
   const analyzeIdea = async () => {
     if(!idea.trim()||ideaLoad) return;
+    if(!apiKeys.claude){ setIdeaRes("⚠️ Claude API key not set. Click ⚙ Keys to add your Anthropic API key."); return; }
     setIdeaLoad(true); setIdeaRes(null);
     try{
       const r=await callClaude([{role:"user",content:`Analyze this trading idea from ${ideaSrc}:\n\n"${idea}"\n\nProvide: 1)Title 2)Category 3)Cleaned strategy 4)Entry/exit rules 5)Risk level 6)Verdict — valid or not?`}],
-        "You are a professional trading analyst. Evaluate strategies critically. Be concise and honest.");
+        "You are a professional trading analyst. Evaluate strategies critically. Be concise and honest.",
+        null, apiKeys.claude);
       setIdeaRes(r);
-    }catch{ setIdeaRes("Error analyzing idea."); }
+    }catch(e){ setIdeaRes(`Error: ${e.message || "Failed to analyze idea."}`); }
     setIdeaLoad(false);
   };
 
   // ── Daily Picks ──
   const genPicks = async () => {
+    if(!apiKeys.claude){ setPicks("⚠️ Claude API key not set. Click ⚙ Keys to add your Anthropic API key."); return; }
     setPicksLoad(true); setPicks(null);
     const topUs=usData.sort((a,b)=>b.score-a.score).slice(0,6).map(s=>`[US] ${s.sym}(${s.name}):$${s.last} RSI:${s.rsi} ${s.chg}%/day Score:${s.score} Signals:${s.signals?.map(x=>x.label).join(",")}`).join("\n");
     const topIn=inData.sort((a,b)=>b.score-a.score).slice(0,6).map(s=>`[IN] ${s.sym}(${s.name}):₹${s.last} RSI:${s.rsi} ${s.chg}%/day Score:${s.score} Signals:${s.signals?.map(x=>x.label).join(",")}`).join("\n");
     const vCtx=vault.slice(0,8).map(e=>`${e.title}(${e.category}):${e.content.slice(0,150)}`).join("\n");
     try{
       const r=await callClaude([{role:"user",content:`Date: ${today}\n\nMY STRATEGY VAULT:\n${vCtx}\n\nUS STOCK SIGNALS:\n${topUs}\n\nINDIAN STOCK SIGNALS:\n${topIn}\n\nGive me TOP 3 picks (mix of US and India based on signals). For each:\n1. Symbol + market flag 🇺🇸/🇮🇳\n2. Why it matches my vault strategies\n3. Entry zone\n4. Stop loss\n5. Target\n6. Confidence (1-10)\n7. Key risk`}],
-        "You are a dual-market analyst covering US and Indian stocks. Match signals to the user's strategies. Always note that this is educational/simulation only.");
+        "You are a dual-market analyst covering US and Indian stocks. Match signals to the user's strategies. Always note that this is educational/simulation only.",
+        null, apiKeys.claude);
       setPicks(r);
-    }catch{ setPicks("Error generating picks."); }
+    }catch(e){ setPicks(`Error: ${e.message || "Failed to generate picks."}`); }
     setPicksLoad(false);
   };
 
